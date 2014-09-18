@@ -4,32 +4,15 @@ module Stretcher
 
     # Internal use only.
     # Returns a properly configured HTTP client when initializing an instance
-    def self.build_client(uri_components, options={})
-      http = Faraday.new(:url => uri_components) do |builder|
-        builder.response :json, :content_type => /\bjson$/
-
-        builder.request :json
-
-        builder.options[:timeout] = options[:read_timeout] || 30
-        builder.options[:open_timeout] = options[:open_timeout] || 2
-
+    def self.build_client(options)
+      options[:transport_options] ||= { request: { timeout: 30, open_timeout: 2 } }
+      Elasticsearch::Client.new options do |builder|
         if faraday_configurator = options[:faraday_configurator]
           faraday_configurator.call(builder)
         else
           builder.adapter :excon
         end
       end
-      http.headers = {
-        :accept =>  'application/json',
-        :user_agent => "Stretcher Ruby Gem #{Stretcher::VERSION}",
-        "Content-Type" => "application/json"
-      }
-
-      if uri_components.user || uri_components.password
-        http.basic_auth(uri_components.user, uri_components.password)
-      end
-
-      http
     end
 
     # Internal use only.
@@ -45,7 +28,7 @@ module Stretcher
           "[Stretcher][#{severity}]: #{msg}\n"
         end
       end
-      
+
       logger
     end
 
@@ -76,16 +59,14 @@ module Stretcher
     # settings. The default is read_timeout: 30, open_timeout: 2, which can be quite long
     # in many situations
     #
-    # When running inside a multi-threaded server such as EventMachine, and 
+    # When running inside a multi-threaded server such as EventMachine, and
     # using a threadsafe HTTP library such as faraday, the mutex synchronization around
     # API calls to the server can be avoided. In this case, set the option http_threadsafe: true
-    # 
-    def initialize(uri='http://localhost:9200', options={})      
-      @http_threadsafe = !!options[:http_threadsafe]
-      @request_mtx = Mutex.new unless @http_threadsafe
+    #
+    def initialize(uri='http://localhost:9200', options={})
       @uri = uri.to_s
       @uri_components = URI.parse(@uri)
-      @http = self.class.build_client(@uri_components, options)
+      @http   = self.class.build_client(options.merge url: @uri_components)
       @logger = self.class.build_logger(options)
     end
 
@@ -162,18 +143,19 @@ module Stretcher
     def mget(docs=[], arg_opts={})
       #Legacy API
       return legacy_mget(docs) if docs.is_a?(Hash)
-      
+
       opts = {:exists => true}.merge(arg_opts)
-      
+
       res = request(:get, path_uri("/_mget"), {}, {:docs => docs})[:docs]
-      if opts.has_key?(:exists)
-        match = opts[:exists]
-        res.select {|d| d[:exists] == match}
-      else
+      if !opts.has_key?(:exists)
         res
+      elsif opts[:exists]
+        res.reject {|d| d.has_key?(:exists) }
+      else
+        res.select {|d| d[:exists] == false }
       end
     end
-    
+
     # legacy implementation of mget for backwards compat
     def legacy_mget(body)
       request(:get, path_uri("/_mget"), {}, body)
@@ -185,9 +167,7 @@ module Stretcher
     #    # => #<Hashie::Mash tokens=[#<Hashie::Mash end_offset=7 position=1 start_offset=0 token="candl" type="<ALPHANUM>">]>
     # as per: http://www.elasticsearch.org/guide/reference/api/admin-indices-analyze.html
     def analyze(text, analysis_params)
-      request(:get, path_uri("/_analyze"), analysis_params) do |req|
-        req.body = text
-      end
+      request(:get, path_uri("/_analyze"), analysis_params, text)
     end
 
     # Implements the Aliases API
@@ -213,53 +193,23 @@ module Stretcher
 
     # Full path to the server root dir
     def path_uri(path=nil)
-      URI.join(@uri.to_s, "#{@uri_components.path}/#{path.to_s}").to_s
+      "#{@uri_components.path}/#{path.to_s}"
     end
 
     # Handy way to query the server, returning *only* the body
     # Will raise an exception when the status is not in the 2xx range
-    def request(method, path, params={}, body=nil, headers={}, options={}, &block)
-      options = { :mashify => true }.merge(options)
-      req = http.build_request(method)
-      req.path = path
-      req.params.update(Util.clean_params(params)) if params
-      req.body = body
-      req.headers.update(headers) if headers
-      block.call(req) if block
-      logger.debug { Util.curl_format(req) }
-
-      if @http_threadsafe
-        env = req.to_env(http)
-        check_response(http.app.call(env), options)
+    def request(method, path, params={}, body=nil, headers={}, options={})
+      res = http.perform_request(method, path, params, body)
+      options = { mashify: true }.merge(options)
+      if options[:mashify] && res.body.instance_of?(Hash)
+        Hashie::Mash.new(res.body)
       else
-        @request_mtx.synchronize {
-          env = req.to_env(http)
-          check_response(http.app.call(env), options)
-        }
+        res.body
       end
+    rescue Elasticsearch::Transport::Transport::Errors::NotFound => err
+      err_str = "Error processing request: (404)! #{method} URL: #{path}\n#{err}"
+      raise RequestError::NotFound.new(err), err_str
     end
 
-    private
-
-
-    # Internal use only
-    # Check response codes from request
-    def check_response(res, options)
-      if res.status >= 200 && res.status <= 299
-        if(options[:mashify] && res.body.instance_of?(Hash))
-          Hashie::Mash.new(res.body)
-        else
-          res.body
-        end
-      elsif [404, 410].include? res.status
-        err_str = "Error processing request: (#{res.status})! #{res.env[:method]} URL: #{res.env[:url]}"
-        err_str << "\n Resp Body: #{res.body}"
-        raise RequestError::NotFound.new(res), err_str
-      else
-        err_str = "Error processing request (#{res.status})! #{res.env[:method]} URL: #{res.env[:url]}"
-        err_str << "\n Resp Body: #{res.body}"
-        raise RequestError.new(res), err_str
-      end
-    end
   end
 end

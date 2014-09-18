@@ -30,8 +30,9 @@ Gem::Specification.new do |gem|
   gem.add_dependency('faraday_middleware', '~> 0.9')
   gem.add_dependency('excon', '>= 0.16')
   gem.add_dependency('hashie', '>= 2.1.0')
+  gem.add_dependency('elasticsearch-transport', '~> 1.0')
 
-  gem.add_development_dependency 'rspec', '>= 2.5.0'
+  gem.add_development_dependency 'rspec', '~> 2.14.0'
   gem.add_development_dependency 'coveralls'
   gem.add_development_dependency 'simplecov'
   gem.add_development_dependency 'vcr'

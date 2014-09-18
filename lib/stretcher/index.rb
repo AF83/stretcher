@@ -70,7 +70,7 @@ module Stretcher
 
     # Creates the index, with the supplied hash as the options body (usually mappings: and settings:))
     def create(options=nil)
-      request(:put, nil, nil, options)
+      request(:put, nil, {}, options)
     end
 
     # Deletes the index
@@ -160,9 +160,7 @@ module Stretcher
     #    index.analyze("Candles", analyzer: :snowball)
     #    # => #<Hashie::Mash tokens=[#<Hashie::Mash end_offset=7 position=1 start_offset=0 token="candl" type="<ALPHANUM>">]>
     def analyze(text, analysis_params)
-      request(:get, "_analyze", analysis_params) do |req|
-        req.body = text
-      end
+      request(:get, "_analyze", analysis_params, text)
     end
 
     # Perform a refresh making all items in this index available instantly

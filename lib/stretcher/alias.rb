@@ -25,13 +25,11 @@ module Stretcher
     #
     #   my_alias.create({ filter: { term: { user_id: 1 } } })
     def create(options = {})
-      request(:put) do |req|
-        req.body = {
-          actions: [
-            add: options.merge(:alias => @name)
-          ]
-        }
-      end
+      request(:put, nil, {}, {
+        actions: [
+          add: options.merge(:alias => @name)
+        ]
+      })
     end
 
     # Delete an alias from elastic search
