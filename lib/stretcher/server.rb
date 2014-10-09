@@ -64,9 +64,9 @@ module Stretcher
     # API calls to the server can be avoided. In this case, set the option http_threadsafe: true
     #
     def initialize(uri='http://localhost:9200', options={})
-      @uri = uri.to_s
-      @uri_components = URI.parse(@uri)
-      @http   = self.class.build_client(options.merge url: @uri_components)
+      uris = Array(uri)
+      @uri_components = URI.parse uris.first
+      @http   = self.class.build_client(options.merge hosts: uris)
       @logger = self.class.build_logger(options)
     end
 
